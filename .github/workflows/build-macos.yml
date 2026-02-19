@@ -11,15 +11,11 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
 
     strategy:
       matrix:
-        include:
-          - arch: arm64
-            runner: macos-latest
-          - arch: x64
-            runner: macos-13
+        arch: [arm64, x64]
 
     steps:
       - name: Checkout code
@@ -35,7 +31,7 @@ jobs:
         run: npm ci
 
       - name: Install sharp native bindings for ${{ matrix.arch }}
-        run: npm install --no-save @img/sharp-darwin-${{ matrix.arch }} @img/sharp-libvips-darwin-${{ matrix.arch }}
+        run: npm install --no-save --force @img/sharp-darwin-${{ matrix.arch }} @img/sharp-libvips-darwin-${{ matrix.arch }}
 
       - name: Build app
         run: npm run build
