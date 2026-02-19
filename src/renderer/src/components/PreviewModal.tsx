@@ -15,9 +15,13 @@ export default function PreviewModal() {
     addToast
   } = useStore()
 
-  // Calculate cross-screen crop preview regions
+  // Calculate per-screen cropped preview regions using the same cover-scale algorithm
+  // as the main process cropImage function.
+  //
+  // For each screen, we compute CSS background-size/position so that exactly the
+  // portion of the image that will be shown on that screen is visible in the preview box.
   const cropPreviews = useMemo(() => {
-    if (!previewPhoto || screens.length === 0) return []
+    if (!previewPhoto || screens.length === 0) return null
 
     const minX = Math.min(...screens.map((s) => s.x))
     const minY = Math.min(...screens.map((s) => s.y))
@@ -26,15 +30,39 @@ export default function PreviewModal() {
     const totalW = maxX - minX
     const totalH = maxY - minY
 
-    return screens.map((screen, i) => ({
-      screen,
-      index: i + 1,
-      // Percentage positions relative to total screen area
-      left: ((screen.x - minX) / totalW) * 100,
-      top: ((screen.y - minY) / totalH) * 100,
-      width: (screen.width / totalW) * 100,
-      height: (screen.height / totalH) * 100
-    }))
+    // Reference container size for the virtual desktop layout
+    const containerW = 560
+    const containerH = Math.round((containerW * totalH) / totalW)
+
+    const imgW = previewPhoto.width
+    const imgH = previewPhoto.height
+
+    // Scale the image to cover the virtual desktop (same as main process cropImage)
+    const bgScale = Math.max(containerW / imgW, containerH / imgH)
+    const bgW = imgW * bgScale
+    const bgH = imgH * bgScale
+    // Center offset when image is larger than container in one dimension
+    const bgOffX = (containerW - bgW) / 2
+    const bgOffY = (containerH - bgH) / 2
+
+    const screenPreviews = screens.map((screen, i) => {
+      // Position and size of this screen within the virtual desktop (in preview pixels)
+      const left = ((screen.x - minX) / totalW) * containerW
+      const top = ((screen.y - minY) / totalH) * containerH
+      const width = (screen.width / totalW) * containerW
+      const height = (screen.height / totalH) * containerH
+
+      // Shift the background so only this screen's crop region is visible inside the box.
+      // background-position: X Y places the image so its top-left is at (X, Y) relative
+      // to the element's top-left. We want the image offset such that the portion
+      // starting at (left, top) in the virtual desktop is at (0, 0) in this box.
+      const bgPosX = bgOffX - left
+      const bgPosY = bgOffY - top
+
+      return { screen, index: i + 1, left, top, width, height, bgPosX, bgPosY, bgW, bgH }
+    })
+
+    return { containerW, containerH, screenPreviews }
   }, [previewPhoto, screens])
 
   if (!previewPhoto) return null
@@ -112,42 +140,64 @@ export default function PreviewModal() {
             />
           </div>
 
-          {/* Cross-screen crop preview */}
-          {screens.length > 0 && (
+          {/* Per-screen cropped preview in actual screen layout */}
+          {screens.length > 0 && cropPreviews && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                Cross-Screen Preview ({screens.length} display{screens.length > 1 ? 's' : ''})
+                Screen Layout Preview ({screens.length} display{screens.length !== 1 ? 's' : ''})
               </h3>
-              <div
-                className="relative rounded-xl overflow-hidden border border-gray-200"
-                style={{ aspectRatio: `${previewPhoto.width} / ${previewPhoto.height}` }}
-              >
-                {/* Background image */}
-                <img
-                  src={previewPhoto.urls.regular}
-                  alt=""
-                  className="absolute inset-0 w-full h-full object-cover"
-                />
-                {/* Screen overlay regions */}
-                {cropPreviews.map(({ screen, index, left, top, width, height }) => (
-                  <div
-                    key={screen.id}
-                    className="absolute border-2 border-white/80 bg-white/10 backdrop-blur-[1px] flex items-center justify-center"
-                    style={{
-                      left: `${left}%`,
-                      top: `${top}%`,
-                      width: `${width}%`,
-                      height: `${height}%`
-                    }}
-                  >
-                    <div className="bg-black/50 text-white text-xs px-2 py-1 rounded-md">
-                      Screen {index}
-                      <span className="block text-[10px] text-white/70">
-                        {screen.width}x{screen.height}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              {/* Scrollable wrapper in case the layout is wider than the modal */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                {/* Container represents the full virtual desktop space */}
+                <div
+                  style={{
+                    position: 'relative',
+                    width: `${cropPreviews.containerW}px`,
+                    height: `${cropPreviews.containerH}px`,
+                    backgroundColor: '#1a1a1a'
+                  }}
+                >
+                  {cropPreviews.screenPreviews.map(
+                    ({ screen, index, left, top, width, height, bgPosX, bgPosY, bgW, bgH }) => (
+                      <div
+                        key={screen.id}
+                        style={{
+                          position: 'absolute',
+                          left: `${left}px`,
+                          top: `${top}px`,
+                          width: `${width}px`,
+                          height: `${height}px`,
+                          // Show only the crop region for this screen using background positioning
+                          backgroundImage: `url(${previewPhoto.urls.regular})`,
+                          backgroundSize: `${bgW}px ${bgH}px`,
+                          backgroundPosition: `${bgPosX}px ${bgPosY}px`,
+                          backgroundRepeat: 'no-repeat',
+                          // Screen border
+                          outline: '2px solid rgba(255,255,255,0.55)',
+                          outlineOffset: '-1px',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 4,
+                            left: 4,
+                            background: 'rgba(0,0,0,0.55)',
+                            color: 'white',
+                            fontSize: 10,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            backdropFilter: 'blur(4px)',
+                            lineHeight: 1.5
+                          }}
+                        >
+                          Screen {index} · {screen.width}×{screen.height}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -156,10 +206,7 @@ export default function PreviewModal() {
           {wallpaperStatuses.length > 0 && (
             <div className="space-y-2">
               {wallpaperStatuses.map((status) => (
-                <div
-                  key={status.screenId}
-                  className="flex items-center gap-3 text-sm"
-                >
+                <div key={status.screenId} className="flex items-center gap-3 text-sm">
                   <span className="text-gray-600">Screen {status.screenId}:</span>
                   <span
                     className={`font-medium ${
@@ -221,11 +268,7 @@ export default function PreviewModal() {
           >
             {isApplying ? (
               <>
-                <svg
-                  className="animate-spin w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
                   <circle
                     className="opacity-25"
                     cx="12"

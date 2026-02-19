@@ -73,35 +73,117 @@ async function cropImage(
   return outputPath
 }
 
-async function setWallpaperMacOS(imagePath: string, screenIndex: number): Promise<void> {
-  // Use osascript to set wallpaper for all spaces on macOS
-  const script = `
-    tell application "System Events"
-      tell every desktop
-        set picture to "${imagePath}"
-      end tell
-    end tell
-  `
-  await execAsync(`osascript -e '${script}'`)
-}
+// Apply wallpapers to all screens across ALL workspaces (spaces) using two complementary approaches:
+//
+// 1. AppleScript: groups System Events desktops by display name (order matches Electron's
+//    getAllDisplays()), then sets the correct cropped image for every workspace on each display.
+//
+// 2. Python + sqlite3: directly updates desktoppicture.db so non-active spaces also get
+//    the correct wallpaper when the user switches to them (macOS reads the DB on space switch).
+//
+// screenImages is indexed by screen order (same as Electron's screen.getAllDisplays()).
+// null entries are skipped.
+async function setWallpapersForAllSpaces(screenImages: Array<string | null>): Promise<void> {
+  if (process.platform !== 'darwin') {
+    screenImages.forEach((p, i) => p && console.log(`[Dev] Screen ${i}: ${p}`))
+    return
+  }
 
-async function setWallpaperForAllSpaces(imagePath: string, screenId: string): Promise<void> {
-  if (process.platform === 'darwin') {
-    // Use NSWorkspace via osascript to set wallpaper for all spaces
-    const script = `
-      tell application "System Events"
-        set desktopCount to count of desktops
-        repeat with desktopNumber from 1 to desktopCount
-          tell desktop desktopNumber
-            set picture to POSIX file "${imagePath}"
-          end tell
-        end repeat
-      end tell
-    `
-    await execAsync(`osascript -e '${script}'`)
-  } else {
-    // Fallback for other platforms (for development/testing)
-    console.log(`[Dev] Would set wallpaper for screen ${screenId} to ${imagePath}`)
+  const valid = screenImages
+    .map((path, idx) => ({ path, idx }))
+    .filter((x): x is { path: string; idx: number } => x.path !== null)
+
+  if (valid.length === 0) return
+
+  // --- Approach 1: AppleScript with display-name grouping ---
+  // Iterates ALL desktops (workspaces), groups by display name preserving first-occurrence
+  // order (which matches Electron's screen order), and applies the correct per-screen image.
+  const branches = valid
+    .map(({ path, idx }) => {
+      const safePath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      return `if displayIdx = ${idx} then\n        set picture of d to POSIX file "${safePath}"`
+    })
+    .join('\n      else ')
+
+  const appleScript = `tell application "System Events"
+  set allDesktops to every desktop
+  set displayNamesOrdered to {}
+  repeat with d in allDesktops
+    set dn to display name of d
+    if displayNamesOrdered does not contain dn then
+      set end of displayNamesOrdered to dn
+    end if
+  end repeat
+  repeat with d in allDesktops
+    set dn to display name of d
+    set displayIdx to 0
+    repeat with i from 1 to count of displayNamesOrdered
+      if item i of displayNamesOrdered is dn then
+        set displayIdx to i - 1
+        exit repeat
+      end if
+    end repeat
+    ${branches}
+    end if
+  end repeat
+end tell`
+
+  const appleScriptPath = join(WALLPAPER_DIR, 'set_wallpaper.applescript')
+  writeFileSync(appleScriptPath, appleScript)
+  await execAsync(`osascript "${appleScriptPath}"`)
+
+  // --- Approach 2: Update desktoppicture.db for non-active spaces ---
+  // macOS reads wallpaper settings from this SQLite database when switching spaces.
+  // Updating it ensures every workspace shows the correct image even if AppleScript
+  // only affects currently active spaces (behavior in macOS Sonoma+).
+  const pairsCode = valid
+    .map(({ path, idx }) => {
+      const safePath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      return `${idx}: "${safePath}"`
+    })
+    .join(', ')
+
+  const pythonScript = `import sqlite3, plistlib, os, sys
+db_path = os.path.expanduser('~/Library/Application Support/Dock/desktoppicture.db')
+if not os.path.exists(db_path):
+    sys.exit(0)
+pairs = {${pairsCode}}
+try:
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("SELECT rowid FROM displays ORDER BY rowid")
+    display_rows = [r[0] for r in c.fetchall()]
+    for display_idx, display_id in enumerate(display_rows):
+        if display_idx not in pairs:
+            continue
+        image_path = pairs[display_idx]
+        plist_data = plistlib.dumps({"BackgroundFilePath": image_path})
+        c.execute("SELECT DISTINCT data_id FROM preferences WHERE display_id = ?", (display_id,))
+        data_ids = [r[0] for r in c.fetchall()]
+        if data_ids:
+            for data_id in data_ids:
+                c.execute("UPDATE data SET value = ? WHERE rowid = ?", (plist_data, data_id))
+        else:
+            c.execute("INSERT INTO data (value) VALUES (?)", (plist_data,))
+            new_id = c.lastrowid
+            c.execute("SELECT rowid FROM spaces WHERE display_id = ?", (display_id,))
+            spaces_list = [r[0] for r in c.fetchall()]
+            for space_id in spaces_list:
+                c.execute(
+                    "INSERT OR REPLACE INTO preferences (display_id, space_id, data_id) VALUES (?, ?, ?)",
+                    (display_id, space_id, new_id))
+    conn.commit()
+    conn.close()
+except Exception as e:
+    print("Warning: desktoppicture.db update failed:", e, file=sys.stderr)
+`
+
+  const pyScriptPath = join(WALLPAPER_DIR, 'update_db.py')
+  writeFileSync(pyScriptPath, pythonScript)
+  try {
+    await execAsync(`python3 "${pyScriptPath}"`)
+  } catch {
+    // Non-critical: AppleScript already handled current spaces
   }
 }
 
@@ -112,7 +194,7 @@ export async function applyWallpaper(
 ): Promise<boolean> {
   ensureWallpaperDir()
 
-  // Calculate total screen bounds
+  // Calculate total virtual screen bounds
   const minX = Math.min(...screens.map((s) => s.x))
   const minY = Math.min(...screens.map((s) => s.y))
   const maxX = Math.max(...screens.map((s) => s.x + s.width))
@@ -125,37 +207,47 @@ export async function applyWallpaper(
   }
 
   // Step 1: Download the full resolution image
-  for (const screen of screens) {
-    onStatus({ screenId: screen.id, status: 'downloading' })
-  }
+  screens.forEach((s) => onStatus({ screenId: s.id, status: 'downloading' }))
 
   let imageBuffer: Buffer
   try {
     imageBuffer = await downloadImage(photoUrl)
-  } catch (error) {
-    for (const screen of screens) {
-      onStatus({ screenId: screen.id, status: 'error', error: 'Download failed' })
-    }
+  } catch {
+    screens.forEach((s) => onStatus({ screenId: s.id, status: 'error', error: 'Download failed' }))
     return false
   }
 
-  // Step 2: Crop and apply for each screen
-  let allSuccess = true
+  // Step 2: Crop for each screen independently
+  const croppedPaths: Array<string | null> = []
   for (const screenInfo of screens) {
     try {
       onStatus({ screenId: screenInfo.id, status: 'cropping' })
-      const croppedPath = await cropImage(imageBuffer, screenInfo, totalBounds)
-
-      onStatus({ screenId: screenInfo.id, status: 'applying' })
-      await setWallpaperForAllSpaces(croppedPath, screenInfo.id)
-
-      onStatus({ screenId: screenInfo.id, status: 'success' })
+      croppedPaths.push(await cropImage(imageBuffer, screenInfo, totalBounds))
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       onStatus({ screenId: screenInfo.id, status: 'error', error: errorMsg })
-      allSuccess = false
+      croppedPaths.push(null)
     }
   }
 
-  return allSuccess
+  // Step 3: Apply ALL wallpapers in a SINGLE call to prevent multi-screen overwrite.
+  // The old approach called setWallpaper per screen, which overwrote all desktops each time.
+  screens.forEach((s, i) => {
+    if (croppedPaths[i] !== null) onStatus({ screenId: s.id, status: 'applying' })
+  })
+
+  try {
+    await setWallpapersForAllSpaces(croppedPaths)
+    screens.forEach((s, i) => {
+      if (croppedPaths[i] !== null) onStatus({ screenId: s.id, status: 'success' })
+    })
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+    screens.forEach((s, i) => {
+      if (croppedPaths[i] !== null) onStatus({ screenId: s.id, status: 'error', error: errorMsg })
+    })
+    return false
+  }
+
+  return croppedPaths.every((p) => p !== null)
 }
