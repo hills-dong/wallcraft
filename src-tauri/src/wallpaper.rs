@@ -113,9 +113,8 @@ fn crop_and_save(
 fn set_wallpaper_direct(screen_images: Vec<Option<String>>) -> Result<(), String> {
     use objc2::msg_send;
     use objc2::rc::Retained;
-    use objc2::MainThreadMarker;
     use objc2_app_kit::{NSScreen, NSWorkspace};
-    use objc2_foundation::{NSDictionary, NSString, NSURL};
+    use objc2_foundation::{MainThreadMarker, NSDictionary, NSString, NSURL};
 
     let mtm = MainThreadMarker::new().ok_or("set_wallpaper_direct must run on main thread")?;
 
