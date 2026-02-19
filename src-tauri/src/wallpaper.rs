@@ -107,12 +107,17 @@ fn crop_and_save(
 // Limitation: this sets the wallpaper on the currently visible space for each
 // screen. Spaces that are not currently active on a given screen are updated via
 // AppleScript (best-effort, silently ignored on failure).
+// Must be called from the main thread (NSScreen requires MainThreadMarker).
+// Called via window.run_on_main_thread() from apply_wallpaper.
 #[cfg(target_os = "macos")]
-fn set_wallpaper_direct(screen_images: &[Option<String>]) -> Result<(), String> {
+fn set_wallpaper_direct(screen_images: Vec<Option<String>>) -> Result<(), String> {
     use objc2::msg_send;
     use objc2::rc::Retained;
+    use objc2::MainThreadMarker;
     use objc2_app_kit::{NSScreen, NSWorkspace};
     use objc2_foundation::{NSDictionary, NSString, NSURL};
+
+    let mtm = MainThreadMarker::new().ok_or("set_wallpaper_direct must run on main thread")?;
 
     let valid: Vec<(usize, String)> = screen_images
         .iter()
@@ -126,7 +131,7 @@ fn set_wallpaper_direct(screen_images: &[Option<String>]) -> Result<(), String> 
 
     unsafe {
         let workspace = NSWorkspace::sharedWorkspace();
-        let screens = NSScreen::screens();
+        let screens = NSScreen::screens(mtm);
         let count = screens.len();
 
         for (idx, path) in &valid {
@@ -139,7 +144,6 @@ fn set_wallpaper_direct(screen_images: &[Option<String>]) -> Result<(), String> 
             let options: Retained<NSDictionary<NSString, objc2::runtime::AnyObject>> =
                 NSDictionary::new();
             let mut error_ptr: *mut objc2_foundation::NSError = std::ptr::null_mut();
-            // Use msg_send! to avoid type-coercion issues with NSDictionary generics
             let ok: bool = msg_send![
                 &*workspace,
                 setDesktopImageURL: &*url,
@@ -215,7 +219,7 @@ fn set_wallpaper_all_spaces(screen_images: &[Option<String>], wdir: &std::path::
 end tell"#
     );
 
-    if let Ok(as_path) = wdir.join("set_wallpaper.applescript").to_str().map(|s| s.to_string()) {
+    if let Some(as_path) = wdir.join("set_wallpaper.applescript").to_str().map(|s| s.to_string()) {
         let _ = fs::write(&as_path, &apple_script);
         let _ = std::process::Command::new("osascript")
             .arg(&as_path)
@@ -226,6 +230,7 @@ end tell"#
 async fn set_wallpapers_for_all_spaces(
     screen_images: &[Option<String>],
     wdir: &PathBuf,
+    window: &tauri::WebviewWindow,
 ) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
@@ -240,8 +245,15 @@ async fn set_wallpapers_for_all_spaces(
     #[cfg(target_os = "macos")]
     {
         // Step 1: Set wallpaper on active space for each screen directly via AppKit.
-        // This is the reliable path — no subprocess, no permissions required.
-        set_wallpaper_direct(screen_images)?;
+        // NSScreen::screens requires MainThreadMarker, so we dispatch to the main thread.
+        let images_for_main = screen_images.to_vec();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        window
+            .run_on_main_thread(move || {
+                let _ = tx.send(set_wallpaper_direct(images_for_main));
+            })
+            .map_err(|e| format!("main thread dispatch failed: {e}"))?;
+        rx.await.map_err(|_| "channel closed".to_string())??;
 
         // Step 2: Best-effort update of all spaces via AppleScript.
         // Requires Automation permission (user may be prompted on first run).
@@ -331,7 +343,7 @@ pub async fn apply_wallpaper(
         }
     }
 
-    match set_wallpapers_for_all_spaces(&cropped_paths, &wdir).await {
+    match set_wallpapers_for_all_spaces(&cropped_paths, &wdir, &window).await {
         Ok(()) => {
             for (screen, path) in screens.iter().zip(cropped_paths.iter()) {
                 if path.is_some() {
