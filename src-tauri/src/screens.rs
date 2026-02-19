@@ -30,7 +30,7 @@ pub fn collect_screens(window: &WebviewWindow) -> Vec<ScreenInfo> {
             let logical_h = (size.height as f64 / scale).round() as u32;
             ScreenInfo {
                 id: i.to_string(),
-                name: m.name().unwrap_or_else(|| format!("Display {}", i + 1)),
+                name: m.name().map(|s| s.to_string()).unwrap_or_else(|| format!("Display {}", i + 1)),
                 x: logical_x,
                 y: logical_y,
                 width: logical_w,
