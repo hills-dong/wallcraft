@@ -140,6 +140,35 @@ async function setWallpapersForAllSpaces(screenImages: Array<string | null>): Pr
   end repeat
 end tell`
 
+  // Step 1: NSWorkspace via JXA — triggers the actual visual desktop refresh.
+  // System Events `set picture` only saves the preference without updating the display.
+  // NSWorkspace.setDesktopImageURL:forScreen:options: both saves and visually applies.
+  // NSScreen.screens ordering matches Electron's getAllDisplays() (primary first).
+  const nsAssignments = valid
+    .map(({ path, idx }) => {
+      const safePath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      return `  if (${idx} < screens.count()) {
+    ws.setDesktopImageURLForScreenOptionsError(
+      $.NSURL.fileURLWithPath($("${safePath}")),
+      screens.objectAtIndex(${idx}),
+      {},
+      0
+    );
+  }`
+    })
+    .join('\n')
+
+  const jxaScript = `ObjC.import('AppKit');
+var ws = $.NSWorkspace.sharedWorkspace;
+var screens = $.NSScreen.screens;
+${nsAssignments}`
+
+  const jxaPath = join(WALLPAPER_DIR, 'set_wallpaper.js')
+  writeFileSync(jxaPath, jxaScript)
+  await execAsync(`osascript -l JavaScript "${jxaPath}"`)
+
+  // Step 2: AppleScript — updates the stored preference for every workspace/space
+  // so that non-active spaces also show the correct wallpaper when switched to.
   const scriptPath = join(WALLPAPER_DIR, 'set_wallpaper.applescript')
   writeFileSync(scriptPath, appleScript)
   await execAsync(`osascript "${scriptPath}"`)
