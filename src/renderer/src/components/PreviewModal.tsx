@@ -15,11 +15,9 @@ export default function PreviewModal() {
     addToast
   } = useStore()
 
-  // Calculate per-screen cropped preview regions using the same cover-scale algorithm
-  // as the main process cropImage function.
-  //
-  // For each screen, we compute CSS background-size/position so that exactly the
-  // portion of the image that will be shown on that screen is visible in the preview box.
+  // Calculate per-screen cropped preview regions.
+  // Uses the same cover-scale algorithm as the main process cropImage function so that
+  // what you see in the preview is exactly what will be applied to each screen.
   const cropPreviews = useMemo(() => {
     if (!previewPhoto || screens.length === 0) return null
 
@@ -30,32 +28,32 @@ export default function PreviewModal() {
     const totalW = maxX - minX
     const totalH = maxY - minY
 
-    // Reference container size for the virtual desktop layout
-    const containerW = 560
+    // Fixed reference width for the virtual desktop container
+    const containerW = 580
     const containerH = Math.round((containerW * totalH) / totalW)
 
     const imgW = previewPhoto.width
     const imgH = previewPhoto.height
 
-    // Scale the image to cover the virtual desktop (same as main process cropImage)
+    // Scale image to cover the virtual desktop (same as main process cropImage)
     const bgScale = Math.max(containerW / imgW, containerH / imgH)
     const bgW = imgW * bgScale
     const bgH = imgH * bgScale
-    // Center offset when image is larger than container in one dimension
+    // Centering offset when the scaled image overflows in one dimension
     const bgOffX = (containerW - bgW) / 2
     const bgOffY = (containerH - bgH) / 2
 
     const screenPreviews = screens.map((screen, i) => {
-      // Position and size of this screen within the virtual desktop (in preview pixels)
+      // Screen's position and size within the virtual desktop (preview pixels)
       const left = ((screen.x - minX) / totalW) * containerW
       const top = ((screen.y - minY) / totalH) * containerH
       const width = (screen.width / totalW) * containerW
       const height = (screen.height / totalH) * containerH
 
-      // Shift the background so only this screen's crop region is visible inside the box.
-      // background-position: X Y places the image so its top-left is at (X, Y) relative
-      // to the element's top-left. We want the image offset such that the portion
-      // starting at (left, top) in the virtual desktop is at (0, 0) in this box.
+      // Shift the background image so only this screen's crop region is visible.
+      // Setting background-position to (bgOffX - left, bgOffY - top) aligns the
+      // image so the portion starting at (left, top) in the virtual desktop
+      // appears at (0, 0) inside this screen box.
       const bgPosX = bgOffX - left
       const bgPosY = bgOffY - top
 
@@ -74,16 +72,13 @@ export default function PreviewModal() {
     clearWallpaperStatuses()
 
     try {
-      // Track download as required by Unsplash API guidelines
       await trackDownload(settings.apiKey, previewPhoto.links.download_location)
-
       const fullUrl = getFullResUrl(previewPhoto)
       const success = await window.api.applyWallpaper(fullUrl)
-
       if (success) {
         addToast('Wallpaper applied to all screens!', 'success')
       }
-    } catch (error) {
+    } catch {
       addToast('Failed to apply wallpaper', 'error')
     } finally {
       setIsApplying(false)
@@ -111,7 +106,7 @@ export default function PreviewModal() {
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-gray-900">Preview</h2>
             <span className="text-sm text-gray-400">
-              {previewPhoto.width} x {previewPhoto.height}
+              {previewPhoto.width} × {previewPhoto.height}
             </span>
           </div>
           <button
@@ -131,22 +126,16 @@ export default function PreviewModal() {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Full image preview */}
-          <div className="rounded-xl overflow-hidden shadow-macos-lg">
-            <img
-              src={previewPhoto.urls.regular}
-              alt={previewPhoto.description || 'Preview'}
-              className="w-full h-auto"
-            />
-          </div>
-
-          {/* Per-screen cropped preview in actual screen layout */}
-          {screens.length > 0 && cropPreviews && (
+          {/* Screen layout preview — each box shows the actual crop for that display */}
+          {cropPreviews ? (
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                Screen Layout Preview ({screens.length} display{screens.length !== 1 ? 's' : ''})
-              </h3>
-              {/* Scrollable wrapper in case the layout is wider than the modal */}
+              <p className="text-sm font-semibold text-gray-700 mb-3">
+                Screen Layout Preview
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  {screens.length} display{screens.length !== 1 ? 's' : ''}
+                </span>
+              </p>
+              {/* Scrollable in case virtual desktop is very wide */}
               <div className="overflow-x-auto rounded-xl border border-gray-200">
                 {/* Container represents the full virtual desktop space */}
                 <div
@@ -154,7 +143,7 @@ export default function PreviewModal() {
                     position: 'relative',
                     width: `${cropPreviews.containerW}px`,
                     height: `${cropPreviews.containerH}px`,
-                    backgroundColor: '#1a1a1a'
+                    backgroundColor: '#111'
                   }}
                 >
                   {cropPreviews.screenPreviews.map(
@@ -167,38 +156,48 @@ export default function PreviewModal() {
                           top: `${top}px`,
                           width: `${width}px`,
                           height: `${height}px`,
-                          // Show only the crop region for this screen using background positioning
                           backgroundImage: `url(${previewPhoto.urls.regular})`,
                           backgroundSize: `${bgW}px ${bgH}px`,
                           backgroundPosition: `${bgPosX}px ${bgPosY}px`,
                           backgroundRepeat: 'no-repeat',
-                          // Screen border
-                          outline: '2px solid rgba(255,255,255,0.55)',
-                          outlineOffset: '-1px',
-                          overflow: 'hidden'
+                          overflow: 'hidden',
+                          outline: '2px solid rgba(255,255,255,0.5)',
+                          outlineOffset: '-1px'
                         }}
                       >
                         <div
                           style={{
                             position: 'absolute',
-                            bottom: 4,
-                            left: 4,
-                            background: 'rgba(0,0,0,0.55)',
+                            bottom: 6,
+                            left: 6,
+                            background: 'rgba(0,0,0,0.6)',
                             color: 'white',
-                            fontSize: 10,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            backdropFilter: 'blur(4px)',
-                            lineHeight: 1.5
+                            fontSize: 11,
+                            padding: '3px 7px',
+                            borderRadius: 5,
+                            lineHeight: 1.5,
+                            backdropFilter: 'blur(6px)'
                           }}
                         >
-                          Screen {index} · {screen.width}×{screen.height}
+                          Screen {index}
+                          <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                            {screen.width}×{screen.height}
+                          </span>
                         </div>
                       </div>
                     )
                   )}
                 </div>
               </div>
+            </div>
+          ) : (
+            /* Fallback: single image preview when no screen info is available */
+            <div className="rounded-xl overflow-hidden border border-gray-200">
+              <img
+                src={previewPhoto.urls.regular}
+                alt={previewPhoto.description || 'Preview'}
+                className="w-full h-auto"
+              />
             </div>
           )}
 

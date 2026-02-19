@@ -73,15 +73,13 @@ async function cropImage(
   return outputPath
 }
 
-// Apply wallpapers to all screens across ALL workspaces (spaces) using two complementary approaches:
+// Apply wallpapers to all screens across ALL workspaces in a single AppleScript call.
 //
-// 1. AppleScript: groups System Events desktops by display name (order matches Electron's
-//    getAllDisplays()), then sets the correct cropped image for every workspace on each display.
+// Groups System Events desktops by display name, preserving first-occurrence order
+// which matches Electron's getAllDisplays() order. Iterates every desktop (workspace)
+// on every display and sets the correct per-screen cropped image.
 //
-// 2. Python + sqlite3: directly updates desktoppicture.db so non-active spaces also get
-//    the correct wallpaper when the user switches to them (macOS reads the DB on space switch).
-//
-// screenImages is indexed by screen order (same as Electron's screen.getAllDisplays()).
+// screenImages is indexed by screen order (same as Electron's getAllDisplays()).
 // null entries are skipped.
 async function setWallpapersForAllSpaces(screenImages: Array<string | null>): Promise<void> {
   if (process.platform !== 'darwin') {
@@ -95,18 +93,26 @@ async function setWallpapersForAllSpaces(screenImages: Array<string | null>): Pr
 
   if (valid.length === 0) return
 
-  // --- Approach 1: AppleScript with display-name grouping ---
-  // Iterates ALL desktops (workspaces), groups by display name preserving first-occurrence
-  // order (which matches Electron's screen order), and applies the correct per-screen image.
-  const branches = valid
-    .map(({ path, idx }) => {
-      const safePath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-      return `if displayIdx = ${idx} then\n        set picture of d to POSIX file "${safePath}"`
-    })
-    .join('\n      else ')
+  // Build AppleScript list (1-indexed). Use empty string for skipped screens.
+  const maxIdx = Math.max(...valid.map((x) => x.idx))
+  const listItems: string[] = []
+  for (let i = 0; i <= maxIdx; i++) {
+    const entry = valid.find((x) => x.idx === i)
+    const safePath = entry ? entry.path.replace(/\\/g, '\\\\').replace(/"/g, '\\"') : ''
+    listItems.push(`"${safePath}"`)
+  }
+  const imagePathsList = `{${listItems.join(', ')}}`
 
+  // AppleScript strategy:
+  //   1. Walk every desktop once to build an ordered list of unique display names.
+  //      First-occurrence order matches Electron's getAllDisplays() order.
+  //   2. Walk every desktop again, look up which display it belongs to (1-based index),
+  //      then set picture using `tell d … end tell` (most reliable syntax).
   const appleScript = `tell application "System Events"
+  set imagePathsList to ${imagePathsList}
   set allDesktops to every desktop
+
+  -- Build ordered unique display name list (preserves screen order)
   set displayNamesOrdered to {}
   repeat with d in allDesktops
     set dn to display name of d
@@ -114,77 +120,29 @@ async function setWallpapersForAllSpaces(screenImages: Array<string | null>): Pr
       set end of displayNamesOrdered to dn
     end if
   end repeat
+
+  -- Set the correct wallpaper for every desktop on every display
   repeat with d in allDesktops
     set dn to display name of d
-    set displayIdx to 0
     repeat with i from 1 to count of displayNamesOrdered
       if item i of displayNamesOrdered is dn then
-        set displayIdx to i - 1
+        if i <= count of imagePathsList then
+          set imgPath to item i of imagePathsList
+          if imgPath is not "" then
+            tell d
+              set picture to POSIX file imgPath
+            end tell
+          end if
+        end if
         exit repeat
       end if
     end repeat
-    ${branches}
-    end if
   end repeat
 end tell`
 
-  const appleScriptPath = join(WALLPAPER_DIR, 'set_wallpaper.applescript')
-  writeFileSync(appleScriptPath, appleScript)
-  await execAsync(`osascript "${appleScriptPath}"`)
-
-  // --- Approach 2: Update desktoppicture.db for non-active spaces ---
-  // macOS reads wallpaper settings from this SQLite database when switching spaces.
-  // Updating it ensures every workspace shows the correct image even if AppleScript
-  // only affects currently active spaces (behavior in macOS Sonoma+).
-  const pairsCode = valid
-    .map(({ path, idx }) => {
-      const safePath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-      return `${idx}: "${safePath}"`
-    })
-    .join(', ')
-
-  const pythonScript = `import sqlite3, plistlib, os, sys
-db_path = os.path.expanduser('~/Library/Application Support/Dock/desktoppicture.db')
-if not os.path.exists(db_path):
-    sys.exit(0)
-pairs = {${pairsCode}}
-try:
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    c.execute("SELECT rowid FROM displays ORDER BY rowid")
-    display_rows = [r[0] for r in c.fetchall()]
-    for display_idx, display_id in enumerate(display_rows):
-        if display_idx not in pairs:
-            continue
-        image_path = pairs[display_idx]
-        plist_data = plistlib.dumps({"BackgroundFilePath": image_path})
-        c.execute("SELECT DISTINCT data_id FROM preferences WHERE display_id = ?", (display_id,))
-        data_ids = [r[0] for r in c.fetchall()]
-        if data_ids:
-            for data_id in data_ids:
-                c.execute("UPDATE data SET value = ? WHERE rowid = ?", (plist_data, data_id))
-        else:
-            c.execute("INSERT INTO data (value) VALUES (?)", (plist_data,))
-            new_id = c.lastrowid
-            c.execute("SELECT rowid FROM spaces WHERE display_id = ?", (display_id,))
-            spaces_list = [r[0] for r in c.fetchall()]
-            for space_id in spaces_list:
-                c.execute(
-                    "INSERT OR REPLACE INTO preferences (display_id, space_id, data_id) VALUES (?, ?, ?)",
-                    (display_id, space_id, new_id))
-    conn.commit()
-    conn.close()
-except Exception as e:
-    print("Warning: desktoppicture.db update failed:", e, file=sys.stderr)
-`
-
-  const pyScriptPath = join(WALLPAPER_DIR, 'update_db.py')
-  writeFileSync(pyScriptPath, pythonScript)
-  try {
-    await execAsync(`python3 "${pyScriptPath}"`)
-  } catch {
-    // Non-critical: AppleScript already handled current spaces
-  }
+  const scriptPath = join(WALLPAPER_DIR, 'set_wallpaper.applescript')
+  writeFileSync(scriptPath, appleScript)
+  await execAsync(`osascript "${scriptPath}"`)
 }
 
 export async function applyWallpaper(
@@ -206,7 +164,7 @@ export async function applyWallpaper(
     totalHeight: maxY - minY
   }
 
-  // Step 1: Download the full resolution image
+  // Step 1: Download
   screens.forEach((s) => onStatus({ screenId: s.id, status: 'downloading' }))
 
   let imageBuffer: Buffer
@@ -217,7 +175,7 @@ export async function applyWallpaper(
     return false
   }
 
-  // Step 2: Crop for each screen independently
+  // Step 2: Crop each screen independently
   const croppedPaths: Array<string | null> = []
   for (const screenInfo of screens) {
     try {
@@ -230,8 +188,8 @@ export async function applyWallpaper(
     }
   }
 
-  // Step 3: Apply ALL wallpapers in a SINGLE call to prevent multi-screen overwrite.
-  // The old approach called setWallpaper per screen, which overwrote all desktops each time.
+  // Step 3: Apply ALL wallpapers in ONE call.
+  // Calling per-screen would overwrite all desktops each time (the original bug).
   screens.forEach((s, i) => {
     if (croppedPaths[i] !== null) onStatus({ screenId: s.id, status: 'applying' })
   })
