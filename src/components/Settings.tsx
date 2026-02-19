@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useStore } from '../store/useStore'
-import { Settings as SettingsType } from '../../../../shared/types'
+import { Settings as SettingsType, ScreenInfo } from '../types'
 
 const UPDATE_INTERVALS = [
   { value: 'manual', label: 'Manual' },
@@ -23,7 +24,7 @@ export default function Settings() {
   const handleSave = async () => {
     setIsSaving(true)
     try {
-      await window.api.saveSettings(form)
+      await invoke('save_settings', { settings: form })
       setSettings(form)
       addToast('Settings saved', 'success')
     } catch {
@@ -36,7 +37,7 @@ export default function Settings() {
   const handleRefreshScreens = async () => {
     setIsRefreshing(true)
     try {
-      const newScreens = await window.api.refreshScreens()
+      const newScreens = await invoke<ScreenInfo[]>('refresh_screens')
       setScreens(newScreens)
       addToast(`Detected ${newScreens.length} display(s)`, 'info')
     } catch {
@@ -46,7 +47,6 @@ export default function Settings() {
     }
   }
 
-  // Calculate screen layout visualization bounds
   const minX = screens.length > 0 ? Math.min(...screens.map((s) => s.x)) : 0
   const minY = screens.length > 0 ? Math.min(...screens.map((s) => s.y)) : 0
   const maxX = screens.length > 0 ? Math.max(...screens.map((s) => s.x + s.width)) : 1920
@@ -59,7 +59,6 @@ export default function Settings() {
       <div className="max-w-2xl mx-auto space-y-8">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
 
-        {/* API Key */}
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
             Unsplash API
@@ -89,7 +88,6 @@ export default function Settings() {
           </div>
         </section>
 
-        {/* Screen Layout */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
@@ -102,19 +100,8 @@ export default function Settings() {
             >
               {isRefreshing ? (
                 <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
               ) : null}
               Refresh
@@ -126,14 +113,9 @@ export default function Settings() {
               <p className="text-sm text-gray-400 text-center py-8">No displays detected</p>
             ) : (
               <>
-                {/* Visual layout */}
                 <div
                   className="relative bg-gray-200 rounded-lg mx-auto mb-4"
-                  style={{
-                    width: '100%',
-                    maxWidth: '400px',
-                    aspectRatio: `${totalW} / ${totalH}`
-                  }}
+                  style={{ width: '100%', maxWidth: '400px', aspectRatio: `${totalW} / ${totalH}` }}
                 >
                   {screens.map((screen, i) => (
                     <div
@@ -147,24 +129,15 @@ export default function Settings() {
                       }}
                     >
                       <span className="text-sm font-bold text-blue-700">{i + 1}</span>
-                      <span className="text-[10px] text-blue-500">
-                        {screen.width}x{screen.height}
-                      </span>
+                      <span className="text-[10px] text-blue-500">{screen.width}x{screen.height}</span>
                     </div>
                   ))}
                 </div>
-
-                {/* Screen details */}
                 <div className="space-y-2">
                   {screens.map((screen, i) => (
-                    <div
-                      key={screen.id}
-                      className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-2"
-                    >
+                    <div key={screen.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-2">
                       <span className="font-medium text-gray-700">Display {i + 1}</span>
-                      <span className="text-gray-400">
-                        {screen.width}x{screen.height} @{screen.scaleFactor}x
-                      </span>
+                      <span className="text-gray-400">{screen.width}x{screen.height} @{screen.scaleFactor}x</span>
                     </div>
                   ))}
                 </div>
@@ -173,7 +146,6 @@ export default function Settings() {
           </div>
         </section>
 
-        {/* Auto Update */}
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
             Auto Update
@@ -183,29 +155,20 @@ export default function Settings() {
               <span className="text-sm text-gray-600">Update Frequency</span>
               <select
                 value={form.updateInterval}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    updateInterval: e.target.value as SettingsType['updateInterval']
-                  })
-                }
+                onChange={(e) => setForm({ ...form, updateInterval: e.target.value as SettingsType['updateInterval'] })}
                 className="mt-1 block w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/30 focus:border-[#007AFF]/30"
               >
                 {UPDATE_INTERVALS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </label>
             <p className="text-xs text-gray-400 mt-2">
-              When enabled, WallCraft will automatically download and apply a new wallpaper from the
-              selected topic at the chosen frequency.
+              When enabled, WallCraft will automatically download and apply a new wallpaper at the chosen frequency.
             </p>
           </div>
         </section>
 
-        {/* Save button */}
         <div className="flex justify-end">
           <button
             onClick={handleSave}
@@ -215,19 +178,8 @@ export default function Settings() {
             {isSaving ? (
               <>
                 <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 Saving...
               </>

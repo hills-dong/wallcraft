@@ -25,17 +25,13 @@ export default function Sidebar() {
 
   return (
     <aside className="w-[220px] flex-shrink-0 bg-[rgba(246,246,246,0.95)] border-r border-gray-200 flex flex-col overflow-hidden">
-      {/* Titlebar drag region */}
       <div className="titlebar-drag h-[52px] flex-shrink-0" />
 
-      {/* Navigation */}
       <div className="px-3 mb-2">
         <button
           onClick={() => setCurrentPage('gallery')}
           className={`titlebar-no-drag w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-            currentPage === 'gallery'
-              ? 'bg-white shadow-sm text-gray-900'
-              : 'text-gray-600 hover:bg-white/60'
+            currentPage === 'gallery' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:bg-white/60'
           }`}
         >
           Gallery
@@ -43,19 +39,15 @@ export default function Sidebar() {
         <button
           onClick={() => setCurrentPage('settings')}
           className={`titlebar-no-drag w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors mt-1 ${
-            currentPage === 'settings'
-              ? 'bg-white shadow-sm text-gray-900'
-              : 'text-gray-600 hover:bg-white/60'
+            currentPage === 'settings' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:bg-white/60'
           }`}
         >
           Settings
         </button>
       </div>
 
-      {/* Divider */}
       <div className="mx-3 border-t border-gray-200 my-2" />
 
-      {/* Topics */}
       <div className="px-3 mb-2">
         <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
           Topics

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ScreenInfo, Settings, UnsplashPhoto, UnsplashTopic, WallpaperStatus } from '../../../../shared/types'
+import { ScreenInfo, Settings, UnsplashPhoto, UnsplashTopic, WallpaperStatus } from '../types'
 
 type Page = 'gallery' | 'settings'
 
@@ -10,25 +10,20 @@ interface Toast {
 }
 
 interface AppState {
-  // Navigation
   currentPage: Page
   setCurrentPage: (page: Page) => void
 
-  // Screens
   screens: ScreenInfo[]
   setScreens: (screens: ScreenInfo[]) => void
 
-  // Settings
   settings: Settings
   setSettings: (settings: Settings) => void
 
-  // Topics
   topics: UnsplashTopic[]
   setTopics: (topics: UnsplashTopic[]) => void
   selectedTopic: string
   setSelectedTopic: (slug: string) => void
 
-  // Photos
   photos: UnsplashPhoto[]
   setPhotos: (photos: UnsplashPhoto[]) => void
   appendPhotos: (photos: UnsplashPhoto[]) => void
@@ -39,47 +34,38 @@ interface AppState {
   hasMorePhotos: boolean
   setHasMorePhotos: (hasMore: boolean) => void
 
-  // Search
   searchQuery: string
   setSearchQuery: (query: string) => void
 
-  // Preview
   previewPhoto: UnsplashPhoto | null
   setPreviewPhoto: (photo: UnsplashPhoto | null) => void
 
-  // Wallpaper status
   wallpaperStatuses: WallpaperStatus[]
   setWallpaperStatus: (status: WallpaperStatus) => void
   clearWallpaperStatuses: () => void
   isApplying: boolean
   setIsApplying: (applying: boolean) => void
 
-  // Toast
   toasts: Toast[]
   addToast: (message: string, type: Toast['type']) => void
   removeToast: (id: string) => void
 }
 
 export const useStore = create<AppState>((set) => ({
-  // Navigation
   currentPage: 'gallery',
   setCurrentPage: (page) => set({ currentPage: page }),
 
-  // Screens
   screens: [],
   setScreens: (screens) => set({ screens }),
 
-  // Settings
   settings: { apiKey: '', topicSlug: '', updateInterval: 'manual' },
   setSettings: (settings) => set({ settings }),
 
-  // Topics
   topics: [],
   setTopics: (topics) => set({ topics }),
   selectedTopic: '',
   setSelectedTopic: (slug) => set({ selectedTopic: slug }),
 
-  // Photos
   photos: [],
   setPhotos: (photos) => set({ photos }),
   appendPhotos: (photos) => set((state) => ({ photos: [...state.photos, ...photos] })),
@@ -90,15 +76,12 @@ export const useStore = create<AppState>((set) => ({
   hasMorePhotos: true,
   setHasMorePhotos: (hasMore) => set({ hasMorePhotos: hasMore }),
 
-  // Search
   searchQuery: '',
   setSearchQuery: (query) => set({ searchQuery: query }),
 
-  // Preview
   previewPhoto: null,
   setPreviewPhoto: (photo) => set({ previewPhoto: photo }),
 
-  // Wallpaper status
   wallpaperStatuses: [],
   setWallpaperStatus: (status) =>
     set((state) => {
@@ -114,7 +97,6 @@ export const useStore = create<AppState>((set) => ({
   isApplying: false,
   setIsApplying: (applying) => set({ isApplying: applying }),
 
-  // Toast
   toasts: [],
   addToast: (message, type) =>
     set((state) => {

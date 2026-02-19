@@ -19,7 +19,6 @@ export default function Toast() {
                 : 'bg-blue-50 text-blue-800 border border-blue-200'
           }`}
         >
-          {/* Icon */}
           {toast.type === 'success' && (
             <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

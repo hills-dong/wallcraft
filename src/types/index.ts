@@ -1,4 +1,3 @@
-// Screen object as defined in PRD
 export interface ScreenInfo {
   id: string
   name: string
@@ -9,14 +8,12 @@ export interface ScreenInfo {
   scaleFactor: number
 }
 
-// Settings object as defined in PRD
 export interface Settings {
   apiKey: string
   topicSlug: string
   updateInterval: 'manual' | '30min' | '1hour' | '6hour' | 'daily'
 }
 
-// Unsplash photo data
 export interface UnsplashPhoto {
   id: string
   width: number
@@ -42,7 +39,6 @@ export interface UnsplashPhoto {
   }
 }
 
-// Unsplash topic
 export interface UnsplashTopic {
   id: string
   slug: string
@@ -57,32 +53,8 @@ export interface UnsplashTopic {
   } | null
 }
 
-// Wallpaper application status
 export interface WallpaperStatus {
   screenId: string
   status: 'pending' | 'downloading' | 'cropping' | 'applying' | 'success' | 'error'
   error?: string
 }
-
-// IPC channel definitions
-export const IPC_CHANNELS = {
-  // Screen
-  GET_SCREENS: 'get-screens',
-  REFRESH_SCREENS: 'refresh-screens',
-
-  // Wallpaper
-  APPLY_WALLPAPER: 'apply-wallpaper',
-  WALLPAPER_STATUS: 'wallpaper-status',
-
-  // Settings
-  GET_SETTINGS: 'get-settings',
-  SAVE_SETTINGS: 'save-settings',
-
-  // Scheduler
-  START_SCHEDULER: 'start-scheduler',
-  STOP_SCHEDULER: 'stop-scheduler',
-
-  // Window
-  SHOW_MAIN_WINDOW: 'show-main-window',
-  NEXT_WALLPAPER: 'next-wallpaper'
-} as const

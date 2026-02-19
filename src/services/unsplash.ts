@@ -1,4 +1,4 @@
-import { UnsplashPhoto, UnsplashTopic } from '../../../../shared/types'
+import { UnsplashPhoto, UnsplashTopic } from '../types'
 
 const BASE_URL = 'https://api.unsplash.com'
 const PER_PAGE = 20
@@ -57,6 +57,5 @@ export async function trackDownload(apiKey: string, downloadLocation: string): P
 }
 
 export function getFullResUrl(photo: UnsplashPhoto): string {
-  // Use raw URL with quality parameters for full resolution
   return `${photo.urls.raw}&q=90&w=${Math.max(photo.width, 3840)}`
 }

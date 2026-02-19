@@ -10,12 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
+  build-tauri:
     runs-on: macos-latest
-
-    strategy:
-      matrix:
-        arch: [arm64, x64]
 
     steps:
       - name: Checkout code
@@ -27,77 +23,37 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
         run: npm ci
-
-      - name: Install sharp native bindings for ${{ matrix.arch }}
-        run: npm install --no-save --force @img/sharp-darwin-${{ matrix.arch }} @img/sharp-libvips-darwin-${{ matrix.arch }}
-
-      - name: Build app
-        run: npm run build
-
-      - name: Build macOS installer (${{ matrix.arch }})
-        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: WallCraft-dmg-${{ matrix.arch }}
-          path: release/*.dmg
-          if-no-files-found: warn
-
-      - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: WallCraft-zip-${{ matrix.arch }}
-          path: release/*.zip
-          if-no-files-found: warn
-
-  release:
-    needs: build-macos
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
 
       - name: Get version from package.json
         id: version
-        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Build Tauri app (Universal)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ steps.version.outputs.version }}-build.${{ github.run_number }}
-          name: WallCraft v${{ steps.version.outputs.version }} (Build ${{ github.run_number }})
-          body: |
+          tagName: v${{ steps.version.outputs.version }}-build.${{ github.run_number }}
+          releaseName: WallCraft v${{ steps.version.outputs.version }} (Build ${{ github.run_number }})
+          releaseBody: |
             ## WallCraft macOS Installer
 
             Auto-generated build from merge to `${{ github.ref_name }}`.
 
             ### Download
-            - **Apple Silicon (M1/M2/M3)**: `WallCraft-*-arm64.dmg`
-            - **Intel Mac**: `WallCraft-*-x64.dmg`
+            - **Universal (Apple Silicon + Intel)**: `WallCraft_*_universal.dmg`
 
             ### Install
-            1. Download the `.dmg` file for your Mac
+            1. Download the `.dmg` file
             2. Open the DMG and drag WallCraft to Applications
-            3. If macOS shows "damaged" or "unidentified developer" warning, run:
-               ```
-               xattr -cr /Applications/WallCraft.app
-               ```
-            4. Launch WallCraft and enter your Unsplash API key
-          files: artifacts/*
-          draft: false
+            3. Launch WallCraft and enter your Unsplash API key
+          args: --target universal-apple-darwin
+          releaseDraft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
