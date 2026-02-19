@@ -59,12 +59,17 @@
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
+    "afterPack": "./build/afterPack.js",
     "files": [
       "dist/**/*"
     ],
     "asarUnpack": [
-      "node_modules/sharp/**",
-      "node_modules/@img/**"
+      "node_modules/sharp/**/*.node",
+      "node_modules/sharp/lib/**",
+      "node_modules/sharp/package.json",
+      "node_modules/@img/**/*.node",
+      "node_modules/@img/**/lib/*.dylib",
+      "node_modules/@img/**/package.json"
     ],
     "directories": {
       "output": "release"
