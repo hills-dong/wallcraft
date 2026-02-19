@@ -2,12 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WallCraft",
   "version": "1.0.0",
-  "identifier": "com.wallcraft.app",
+  "identifier": "com.hillsdong.wallcraft",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "beforeDevCommand": "npm run dev"
+    "beforeBuildCommand": "vite build",
+    "beforeDevCommand": "vite dev --port 1420"
   },
   "app": {
     "windows": [
