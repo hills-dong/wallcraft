@@ -99,75 +99,92 @@ fn crop_and_save(
     Ok(())
 }
 
-async fn set_wallpapers_for_all_spaces(
-    screen_images: &[Option<String>],
-    wdir: &PathBuf,
-) -> Result<(), String> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        for (i, path) in screen_images.iter().enumerate() {
-            if let Some(p) = path {
-                println!("[Dev] Screen {}: {}", i, p);
-            }
-        }
+// Direct NSWorkspace wallpaper setter — no subprocess, no permissions required.
+// NSWorkspace.setDesktopImageURL is a standard AppKit API; calling it from the
+// app process directly means macOS attributes the change to WallCraft, bypassing
+// the TCC/Automation friction that affects osascript subprocesses.
+//
+// Limitation: this sets the wallpaper on the currently visible space for each
+// screen. Spaces that are not currently active on a given screen are updated via
+// AppleScript (best-effort, silently ignored on failure).
+#[cfg(target_os = "macos")]
+fn set_wallpaper_direct(screen_images: &[Option<String>]) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSScreen, NSWorkspace};
+    use objc2_foundation::{NSDictionary, NSString, NSURL};
+
+    let valid: Vec<(usize, String)> = screen_images
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.as_ref().map(|s| (i, s.clone())))
+        .collect();
+
+    if valid.is_empty() {
         return Ok(());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let valid: Vec<(usize, &str)> = screen_images
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| p.as_deref().map(|s| (i, s)))
-            .collect();
+    unsafe {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let screens = NSScreen::screens();
+        let count = screens.len();
 
-        if valid.is_empty() {
-            return Ok(());
+        for (idx, path) in &valid {
+            if *idx >= count {
+                continue;
+            }
+            let screen = screens.objectAtIndex(*idx);
+            let path_ns = NSString::from_str(path);
+            let url: Retained<NSURL> = NSURL::fileURLWithPath(&path_ns);
+            let options: Retained<NSDictionary<NSString, objc2::runtime::AnyObject>> =
+                NSDictionary::new();
+            let mut error_ptr: *mut objc2_foundation::NSError = std::ptr::null_mut();
+            // Use msg_send! to avoid type-coercion issues with NSDictionary generics
+            let ok: bool = msg_send![
+                &*workspace,
+                setDesktopImageURL: &*url,
+                forScreen: &*screen,
+                options: &*options,
+                error: &mut error_ptr
+            ];
+            if !ok {
+                return Err(format!("setDesktopImageURL failed for screen {idx}"));
+            }
         }
+    }
+    Ok(())
+}
 
-        let max_idx = valid.iter().map(|(i, _)| *i).max().unwrap_or(0);
-        let list_items: Vec<String> = (0..=max_idx)
-            .map(|i| {
-                let entry = valid.iter().find(|(idx, _)| *idx == i);
-                let safe = entry
-                    .map(|(_, p)| p.replace('\\', "\\\\").replace('"', "\\\""))
-                    .unwrap_or_default();
-                format!("\"{}\"", safe)
-            })
-            .collect();
-        let image_paths_list = format!("{{{}}}", list_items.join(", "));
+// Best-effort: also update all spaces via AppleScript so non-active spaces pick
+// up the new wallpaper when the user switches to them. Failure here is silently
+// ignored — the wallpaper is already visible on the current space via the direct
+// call above.
+#[cfg(target_os = "macos")]
+fn set_wallpaper_all_spaces(screen_images: &[Option<String>], wdir: &std::path::PathBuf) {
+    let valid: Vec<(usize, &str)> = screen_images
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.as_deref().map(|s| (i, s)))
+        .collect();
 
-        // JXA — NSWorkspace visual refresh
-        let ns_assignments: Vec<String> = valid
-            .iter()
-            .map(|(idx, path)| {
-                let safe = path.replace('\\', "\\\\").replace('"', "\\\"");
-                format!(
-                    "  if ({idx} < screens.count()) {{\n    ws.setDesktopImageURLForScreenOptionsError(\n      $.NSURL.fileURLWithPath($(\"{safe}\")),\n      screens.objectAtIndex({idx}),\n      {{}},\n      0\n    );\n  }}"
-                )
-            })
-            .collect();
-        let jxa_script = format!(
-            "ObjC.import('AppKit');\nvar ws = $.NSWorkspace.sharedWorkspace;\nvar screens = $.NSScreen.screens;\n{}",
-            ns_assignments.join("\n")
-        );
+    if valid.is_empty() {
+        return;
+    }
 
-        let jxa_path = wdir.join("set_wallpaper.js");
-        fs::write(&jxa_path, &jxa_script).map_err(|e| e.to_string())?;
+    let max_idx = valid.iter().map(|(i, _)| *i).max().unwrap_or(0);
+    let list_items: Vec<String> = (0..=max_idx)
+        .map(|i| {
+            let entry = valid.iter().find(|(idx, _)| *idx == i);
+            let safe = entry
+                .map(|(_, p)| p.replace('\\', "\\\\").replace('"', "\\\""))
+                .unwrap_or_default();
+            format!("\"{}\"", safe)
+        })
+        .collect();
+    let image_paths_list = format!("{{{}}}", list_items.join(", "));
 
-        let out = std::process::Command::new("osascript")
-            .args(["-l", "JavaScript", jxa_path.to_str().unwrap()])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            return Err(format!("JXA failed: {stderr} {stdout}"));
-        }
-
-        // AppleScript — all-spaces persistence
-        let apple_script = format!(
-            r#"tell application "System Events"
+    let apple_script = format!(
+        r#"tell application "System Events"
   set imagePathsList to {image_paths_list}
   set allDesktops to every desktop
 
@@ -196,20 +213,44 @@ async fn set_wallpapers_for_all_spaces(
     end repeat
   end repeat
 end tell"#
-        );
+    );
 
-        let as_path = wdir.join("set_wallpaper.applescript");
-        fs::write(&as_path, &apple_script).map_err(|e| e.to_string())?;
+    if let Ok(as_path) = wdir.join("set_wallpaper.applescript").to_str().map(|s| s.to_string()) {
+        let _ = fs::write(&as_path, &apple_script);
+        let _ = std::process::Command::new("osascript")
+            .arg(&as_path)
+            .output();
+    }
+}
 
-        let out = std::process::Command::new("osascript")
-            .arg(as_path.to_str().unwrap())
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            return Err(format!("AppleScript failed: {stderr} {stdout}"));
+async fn set_wallpapers_for_all_spaces(
+    screen_images: &[Option<String>],
+    wdir: &PathBuf,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        for (i, path) in screen_images.iter().enumerate() {
+            if let Some(p) = path {
+                println!("[Dev] Screen {}: {}", i, p);
+            }
         }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Step 1: Set wallpaper on active space for each screen directly via AppKit.
+        // This is the reliable path — no subprocess, no permissions required.
+        set_wallpaper_direct(screen_images)?;
+
+        // Step 2: Best-effort update of all spaces via AppleScript.
+        // Requires Automation permission (user may be prompted on first run).
+        // Silently ignored on failure so the primary wallpaper change always succeeds.
+        let images = screen_images.to_vec();
+        let wdir2 = wdir.clone();
+        tokio::task::spawn_blocking(move || set_wallpaper_all_spaces(&images, &wdir2))
+            .await
+            .ok();
 
         Ok(())
     }
