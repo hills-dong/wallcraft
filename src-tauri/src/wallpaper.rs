@@ -160,7 +160,9 @@ async fn set_wallpapers_for_all_spaces(
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).to_string());
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            return Err(format!("JXA failed: {stderr} {stdout}"));
         }
 
         // AppleScript — all-spaces persistence
@@ -204,7 +206,9 @@ end tell"#
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).to_string());
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            return Err(format!("AppleScript failed: {stderr} {stdout}"));
         }
 
         Ok(())

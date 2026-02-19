@@ -37,7 +37,11 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.plist",
+      "infoPlist": {
+        "NSAppleEventsUsageDescription": "WallCraft needs to control System Events to set wallpapers on all desktops and spaces."
+      }
     }
   }
 }
