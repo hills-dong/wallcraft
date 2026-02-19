@@ -11,11 +11,15 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
 
     strategy:
       matrix:
-        arch: [x64, arm64]
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-13
 
     steps:
       - name: Checkout code
